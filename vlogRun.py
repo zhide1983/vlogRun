@@ -114,7 +114,7 @@ def proc_param_list(text_list=None, is_header_param=False, is_local_param=False,
     idx1 = 0
     str1 = ''
     state = 0
-    while idx1 < len(text_list):
+    while idx1 < len(text_list) or str1 != '':
         while str1 == '':
             str1 = text_list[idx1]
             idx1 += 1
@@ -191,8 +191,10 @@ def proc_param_list(text_list=None, is_header_param=False, is_local_param=False,
                 # ( ...
                 # parameter A = 1)
                 # no ',' in the last parameter in ANSI header
-                state = 0
+                p.value += str1
                 param_list.append(p)
+                str1 = ''
+                state = 0
             else:
                 p.value += str1
                 str1 = ''
@@ -202,7 +204,7 @@ def proc_param_list(text_list=None, is_header_param=False, is_local_param=False,
                 state = 1
                 str1 = ''
             else:
-                state = 2
+                state = 1
                 # do not clean str1 here
     if state != 0:
         print('Error: maybe parameter declaration not completed, check your code!')
@@ -732,7 +734,7 @@ point_to_identifier = True
 port_list = []
 module_list = []
 
-f = open('python_test.v', 'r')
+f = open('test_aa.v', 'r')
 line_num = 0
 b = []
 
@@ -752,6 +754,9 @@ for module_content in module_content_list:
     m = Module()
     if module_content.header_param_content:
         proc_param_list(module_content.header_param_content, True, False, m.parameters)
+        for cell in m.parameters:
+            print(cell.)
+        print(m.parameters)
     if module_content.header_port_content:
         proc_port_list(module_content.header_port_content, True, m.ports, m)
     if module_content.param_content:
@@ -1012,10 +1017,10 @@ for block_cell in block_list:
     else:
         # processing instantiation
         inst_list.append(Instance())
-        if re.match(r'//\s+\[VlogAutoInst\]', block_cell.content[0]):
+        if re.match(r'//\s+\[VlogAutoInst]', block_cell.content[0]):
             idx2 = 2
             inst_list[-1].m_name = block_cell.content[1]
-            str1 = re.sub(r'//\s+\[VlogAutoInst\]\s+', '', block_cell.content[0])
+            str1 = re.sub(r'//\s+\[VlogAutoInst]\s+', '', block_cell.content[0])
             info = str1.split()
             if not info:
                 try:
