@@ -1,15 +1,5 @@
 import re
 
-f = open('python_test.v', 'r')
-line_num = 0
-b = []
-
-while True:
-    line = f.readline()
-    if not line:
-        break
-    b.append(line)
-
 
 # the code below is the same as in the vim script
 
@@ -73,9 +63,12 @@ class Instance:
     def __init__(self):
         self.m_name = ''
         self.i_name = ''
-        self.auto_inst = False
+        self.file_name = ''
+        self.content = []  # instantiation text
+        self.auto_inst = True
         self.parameters = []  # parameter name & instantiated value
-        self.port_match = []
+        self.port_list = []  # port list info got from module
+        self.mapping = []  # port mapping info got from instantiation
         pass
 
 
@@ -91,218 +84,631 @@ class MacroCell:
         self.next_pt = next_cell
 
 
-def proc_para_list(proc_str=''):
+class ModuleContList:
+
+    def __init__(self):
+        self.m_name = ''
+        self.is_ansi_header = True
+        self.header_param_content = []
+        self.header_port_content = []
+        self.param_content = []
+        self.port_content = []
+        self.type_content = []
+        self.localparam_content = []
+        self.block_content = []
+        pass
+
+
+def proc_param_list(text_list=None, is_header_param=False, is_local_param=False, param_list=None):
     """
     :param
-    proc_str: type=string, the string to be processed
-    is_in_module_def: type=bool,
-        True    : inside the module declaration
-        False   : outside the module declaration
-    :return type=string, the string left
-    :parsing the input string recursively to get the parameter name and value
+        text_list: type=string list
+        is_header_param: type=bool
+            True    : inside the module declaration
+            False   : outside the module declaration
+        is_local_param: type=bool
+            True    : local parameter declaration
+            False   : parameter declaration
+        param_list: parameter cell list
     """
-    global point_to_identifier
-    global is_in_para_port_list
-    global proc_type
-    if proc_str == '':
-        return ''
-    elif re.match(r'\)', proc_str) and is_in_para_port_list is True:
-        # process ')' to stop when inside module declaration
-        is_in_para_port_list = False
-        return re.sub(r'^\)', '', proc_str)
-    elif re.match(r';', proc_str) and is_in_para_port_list is False:
-        # process ';' to stop when outside module declaration
-        is_in_para_port_list = False
-        return proc_str
-    elif re.match(r'=', proc_str) is not None:
-        # ptr points to value
-        point_to_identifier = False
-        return proc_para_list(re.sub(r'^=', '', proc_str))
-    elif re.match(r',', proc_str) is not None:
-        point_to_identifier = True
-        return proc_para_list(re.sub(r'^,', '', proc_str))
-    elif proc_str == 'parameter':
-        proc_type = 'parameter'
-        return ''
-    elif proc_str == 'localparam':
-        proc_type = 'localparam'
-        return ''
-    elif (re.match(r"'", proc_str) is not None) and (point_to_identifier is False):
-        if proc_type == 'parameter':
-            parameter_list[-1].value += "'"
-        elif proc_type == 'localparam':
-            localparam_list[-1].value += "'"
-        return proc_para_list(re.sub("^'", '', proc_str))
-    elif re.match(r'\w+', proc_str) is not None:
-        str2 = re.match(r'\w+', proc_str).group()
-        if (str2 == 'logic') or (str2 == 'wire') or (str2 == 'reg') or (str2 == 'integer') or (str2 == 'bit'):
-            # pass the type keyword
-            return proc_para_list(re.sub(r'^\w+', '', proc_str))
-        elif point_to_identifier is True:
-            if proc_type == 'parameter':
+    idx1 = 0
+    str1 = ''
+    state = 0
+    while idx1 < len(text_list):
+        while str1 == '':
+            str1 = text_list[idx1]
+            idx1 += 1
+
+        if state == 0:
+            # idle state, waiting 'parameter' or 'localparam'
+            if str1 == 'parameter' or str1 == 'localparam':
+                str1 = ''
+                state = 1
+            elif is_header_param is True and str1 == ',':
+                str1 = ''
+            elif is_header_param is False and str1 == ';':
+                str1 = ''
+            else:
+                print('Error: got unknown string in parameter declaration!')
+                print('State = %d, text = %s' % (state, str1))
+                exit(1)
+        elif state == 1:
+            # waiting for identifier
+            # maybe exists something like
+            #   parameter logic [2:0] A = 3'd2
+            if str1 == 'logic' or str1 == 'reg' or str1 == 'wire' or str1 == 'integer' or str1 == 'bit':
+                str1 = ''
+            elif re.match(r'\w+', str1):
                 p = Parameter()
-                p.name = re.match(r'\w+', proc_str).group()
+                p.name = re.match(r'\w+', str1).group()
                 p.value = ''
-                parameter_list.append(p)
+                str1 = re.sub(r'^\w+', '', str1)
+                state = 2
             else:
-                p = LocalParameter()
-                p.name = re.match(r'\w+', proc_str).group()
-                p.value = ''
-                localparam_list.append(p)
-            return proc_para_list(re.sub(r'^\w+', '', proc_str))
-        else:
-            if proc_type == 'parameter':
-                parameter_list[-1].value += re.match(r'\w+', proc_str).group()
-                return proc_para_list(re.sub(r'^\w+', '', proc_str))
+                # pass all other things
+                str1 = ''
+        elif state == 2:
+            # waiting for '='
+            if re.match('=', str1):
+                state = 3
+                str1 = re.sub(r'^=', '', str1)
             else:
-                localparam_list[-1].value += re.match(r'\w+', proc_str).group()
-                return proc_para_list(re.sub(r'^\w+', '', proc_str))
+                print('Error: got unknown string in parameter declaration!')
+                print('State = %d, text = %s' % (state, str1))
+                exit(1)
+        elif state == 3:
+            # waiting for value
+            if re.match(',', str1) and is_header_param is True:
+                # [case]
+                # ( ...
+                # parameter A = 1,
+                #           B = 2
+                # [OR]
+                # parameter A = 1,
+                # parameter B = 2
+                # ) ...
+                state = 4
+                param_list.append(p)
+                str1 = re.sub(r'^,', '', str1)
+            elif re.match(';', str1) and is_header_param is False:
+                # [case]
+                # parameter A = 1
+                #           B = 2
+                # [OR]
+                # parameter A = 1;
+                # parameter B = 2;
+                state = 0
+                param_list.append(p)
+                str1 = re.sub(r'^;', '', str1)
+            elif re.match(',', str1) and is_header_param is False:
+                # [case]
+                # parameter A = 1,
+                #           B = 2;
+                state = 1
+                param_list.append(p)
+            elif idx1 == len(text_list):
+                # [case]
+                # ( ...
+                # parameter A = 1)
+                # no ',' in the last parameter in ANSI header
+                state = 0
+                param_list.append(p)
+            else:
+                p.value += str1
+                str1 = ''
+        elif state == 4:
+            # only for header
+            if str1 == 'parameter':
+                state = 1
+                str1 = ''
+            else:
+                state = 2
+                # do not clean str1 here
+    if state != 0:
+        print('Error: maybe parameter declaration not completed, check your code!')
+        print('State = %d, text = %s' % (state, str1))
+        exit(1)
 
-    else:
-        print('Debug: see what is left')
-        print(proc_str)
-        return ''
 
-
-def proc_port_list(proc_str):
+def proc_port_list(text_list=None, is_header_port=False, port_list=None, module=None):
     """
-    :param proc_str: type=string, the string to be processed
-    :return type=string, the string left
-    :parsing the input string recursively to get the port info
+    :param
+        text_list: type=string list
+        is_header_port: type=bool
+            True    : inside the module declaration
+            False   : outside the module declaration
+        port_list: port cell list
     """
-    global is_ansi_header
-    global point_to_identifier
-    global is_in_port_list
-    global is_in_one_port_declare
-    global is_in_up_range
-    global is_in_lo_range
-    if proc_str == '':
-        return ''
-    elif re.match(r'\)', proc_str) is not None and is_in_port_list is True:
-        is_in_port_list = False
-        return re.sub(r'^\)', '', proc_str)
-    elif re.match(r';', proc_str) is not None and is_in_port_list is False:
-        if is_in_port_list is False:
-            del port_list[-1]
-        return proc_str
-    elif re.match(r',', proc_str) is not None:
-        is_in_one_port_declare = False
-        return proc_port_list(re.sub(r'^,', '', proc_str))
-    elif re.match(r'output|input|inout', proc_str) is not None:
-        # dealing with direction
-        if is_in_port_list is True and is_ansi_header is False:
-            is_ansi_header = True
-        str2 = re.search(r'^output|input|inout', proc_str).group()
-        is_in_one_port_declare = True
-        port = Port()
-        port.direction = str2
-        port_list.append(port)
-        return proc_port_list(re.sub(r'^output|input|inout', '', proc_str))
-    elif re.match(r'wire|bit|logic|reg', proc_str) is not None:
-        # dealing with net_type
-        str2 = re.search(r'^wire|bit|logic|reg', proc_str).group()
-        if is_in_one_port_declare is True:
-            port_list[-1].net_type = str2
-        else:
-            # missing direction, inout by default
-            is_in_one_port_declare = True
-            port = Port()
-            port.direction = 'inout'
-            port.net_type = str2
-            port_list.append(port)
-        return proc_port_list(re.sub(r'^wire|bit|logic|reg', '', proc_str))
-    elif re.match(r'signed|unsigend', proc_str) is not None:
-        # dealing with signing
-        str2 = re.search(r'^signed|unsigend', proc_str).group()
-        if is_in_one_port_declare is True:
-            port_list[-1].signing = str2
-        else:
-            # missing direction, inout/wire by default
-            is_in_one_port_declare = True
-            port = Port()
-            port.direction = 'inout'
-            port.net_type = 'wire'
-            port.signing = str2
-            port_list.append(port)
-        return proc_port_list(re.sub(r'^signed|unsigend', '', proc_str))
-    elif re.match(r'\[', proc_str) is not None:
-        # dealing with range splitter
-        is_in_up_range = True
-        return proc_port_list(re.sub(r'^\[', '', proc_str))
-    elif re.match(r'\]', proc_str) is not None:
-        # dealing with range splitter
-        is_in_lo_range = False
-        return proc_port_list(re.sub(r'^\]', '', proc_str))
-    elif re.match(r':', proc_str) is not None:
-        # dealing with range splitter
-        is_in_up_range = False
-        is_in_lo_range = True
-        return proc_port_list(re.sub(r'^:', '', proc_str))
-    elif re.match(r'\d+', proc_str) is not None:
-        # dealing with range
-        str2 = re.search(r'^\d+', proc_str).group()
-        if is_in_up_range is True:
-            port_list[-1].up_range = int(str2)
-        elif is_in_lo_range is True:
-            port_list[-1].lo_range = int(str2)
-        else:
-            print('[Error]A digital number should not be here!')
-        return proc_port_list(re.sub(r'^\d+', '', proc_str))
-    elif re.match(r'\w+', proc_str) is not None:
-        # dealing with identifier
-        str2 = re.search(r'^\w+', proc_str).group()
-        if is_in_port_list is True:
-            # inside module port declaration
-            if is_ansi_header is False:
-                # only the name in the module port list for non-ANSI header
-                port = Port()
-                port.name = str2
-                port_list.append(port)
-            elif is_in_one_port_declare is True:
-                port_list[-1].name = str2
-            else:
-                # share the same attributes with the previous one
-                port = Port()
-                port.net_type = port_list[-1].net_type
-                port.up_range = port_list[-1].up_range
-                port.lo_range = port_list[-1].lo_range
-                port.signing = port_list[-1].signing
-                port.direction = port_list[-1].direction
-                port.name = str2
-                port_list.append(port)
-        else:
-            # outside module port declaration
-            if is_in_one_port_declare is True:
-                is_in_list = False
-                for each_port in port_list:
-                    if each_port.name == str2:
-                        each_port.net_type = port_list[-1].net_type
-                        each_port.up_range = port_list[-1].up_range
-                        each_port.lo_range = port_list[-1].lo_range
-                        each_port.signing = port_list[-1].signing
-                        each_port.direction = port_list[-1].direction
-                        is_in_list = True
-                        break
-                if is_in_list is False:
-                    print('Error: Port ' + str2 + ' not defined in module port list')
-                    exit(1)
-            else:
-                # share the same attributes with the previous one
-                is_in_list = False
-                for each_port in port_list:
-                    if each_port.name == str2:
-                        each_port.net_type = port_list[-1].net_type
-                        each_port.up_range = port_list[-1].up_range
-                        each_port.lo_range = port_list[-1].lo_range
-                        each_port.signing = port_list[-1].signing
-                        each_port.direction = port_list[-1].direction
-                        is_in_list = True
-                        break
-                if is_in_list is False:
-                    print('Error: Port ' + str2 + ' not defined in module port list')
-                    exit(1)
+    idx1 = 0
+    str1 = ''
+    state = 0
+    while idx1 < len(text_list):
+        if str1 == '':
+            str1 = text_list[idx1]
+            idx1 += 1
 
-        return proc_port_list(re.sub(r'^\w+', '', proc_str))
+        if state == 0:
+            # idle state, waiting for direction 'output/input/inout'
+            if str1 == re.match(r'output|input|inout', str1):
+                if is_header_port is True:
+                    module.is_ansi_header = True
+                p = Port()
+                p.direction = re.match(r'output|input|inout', str1).group()
+                state = 1
+                str1 = re.sub(r'^output|input|inout', '', str1)
+            elif str1 == re.match('wire|bit|logic|reg', str1):
+                # missing direction, use inout by default
+                p = Port()
+                p.direction = 'inout'
+                p.net_type = re.match('wire|bit|logic|reg', str1).group()
+                str1 = re.sub(r'^wire|bit|logic|reg', '', str1)
+                state = 2
+            elif str1 == re.match('signed|unsigned', str1):
+                # missing direction, use inout by default
+                p = Port()
+                p.direction = 'inout'
+                p.net_type = 'wire'
+                p.signing = re.match('signed|unsigned', str1).group()
+                str1 = re.sub(r'^signed|unsigned', '', str1)
+                state = 3
+            elif re.match(r'\w+', str1):
+                if is_header_port:
+                    # [case]
+                    # (out1, in1, in2)
+                    p = Port()
+                    p.name = re.match(r'\w+', str1).group()
+                    str1 = re.sub(r'^\w+', '', str1)
+                    state = 7
+                else:
+                    print('Error: got unknown string in port declaration!')
+                    print('State = %d, text = %s' % (state, str1))
+                    exit(1)
+            elif is_header_port is True and str1 == ',':
+                str1 = ''
+            elif is_header_port is False and str1 == ';':
+                str1 = ''
+            else:
+                print('Error: got unknown string in port declaration!')
+                print('State = %d, text = %s' % (state, str1))
+                exit(1)
+        elif state == 1:
+            # waiting for net_type or signing or identifier
+            if re.match(r'wire|bit|logic|reg', str1):
+                p.net_type = re.match('wire|bit|logic|reg').group()
+                str1 = re.sub(r'^wire|bit|logic|reg', '', str1)
+                state = 2
+            elif re.match(r'signed|unsigend', str1):
+                # 'wire' by default
+                p.net_type = 'wire'
+                p.signing = re.match('signed|unsigned').group()
+                str1 = re.sub(r'^signed|unsigned', '', str1)
+                state = 3
+            elif re.match(r'\[', str1):
+                # 'wire'/'unsigned' by default
+                p.net_type = 'wire'
+                p.signing = 'unsigned'
+                str1 = re.sub(r'^\[', '', str1)
+                state = 4
+            elif re.match(r'\w+', str1):
+                if is_header_port:
+                    # [case]
+                    # (output out1)
+                    # 'wire'/'unsigned' by default
+                    p.net_type = 'wire'
+                    p.signing = 'unsigned'
+                    p.name = re.match(r'\w+', str1).group()
+                    str1 = re.sub(r'^\w+', '', str1)
+                elif module.is_ansi_header and not is_header_port:
+                    print('Error: port defined in both inside and outside module header')
+                    print('State = %d, text = %s' % (state, str1))
+                    exit(1)
+                elif not module.is_ansi_header and not is_header_port:
+                    # port already generated when parsing header
+                    for each_port in m.ports:
+                        if each_port.name == p.name:
+                            each_port.net_type = 'wire'
+                            each_port.signing = 'unsigned'
+                            each_port.direction = p.direction
+                        else:
+                            print('Error: port declared outside the header is not declared inside the header!')
+                            print('State = %d, port = %s' % (state, p.name))
+                            exit(1)
+                    str1 = re.sub(r'^\w+', '', str1)
+                state = 7
+            else:
+                print('Error: got unknown string in port declaration!')
+                print('State = %d, text = %s' % (state, str1))
+                exit(1)
+        elif state == 2:
+            # waiting for signing or [..:..] or identifier
+            if re.match(r'signed|unsigend', str1):
+                p.signing = re.match('signed|unsigned').group()
+                str1 = re.sub(r'^signed|unsigned', '', str1)
+                state = 3
+            elif re.match(r'\[', str1):
+                # 'unsigned' by default
+                p.signing = 'unsigned'
+                str1 = re.sub(r'^\[', '', str1)
+                state = 4
+            elif re.match(r'\w+', str1):
+                if is_header_port:
+                    # [case]
+                    # (output wire out1)
+                    # 'unsigned' by default
+                    p.signing = 'unsigned'
+                    p.name = re.match(r'\w+', str1).group()
+                    str1 = re.sub(r'^\w+', '', str1)
+                elif module.is_ansi_header and not is_header_port:
+                    print('Error: port defined in both inside and outside module header')
+                    print('State = %d, text = %s' % (state, str1))
+                    exit(1)
+                elif not module.is_ansi_header and not is_header_port:
+                    # port already generated when parsing header
+                    for each_port in m.ports:
+                        if each_port.name == p.name:
+                            each_port.signing = 'unsigned'
+                            each_port.direction = p.direction
+                            each_port.net_type = p.net_type
+                        else:
+                            print('Error: port declared outside the header is not declared inside the header!')
+                            print('State = %d, port = %s' % (state, p.name))
+                            exit(1)
+                    str1 = re.sub(r'^\w+', '', str1)
+                state = 7
+            else:
+                print('Error: got unknown string in port declaration!')
+                print('State = %d, text = %s' % (state, str1))
+                exit(1)
+        elif state == 3:
+            # waiting for [..:..] or identifier
+            if re.match(r'\[', str1):
+                # 'wire'/'unsigned' by default
+                str1 = re.sub(r'^\[', '', str1)
+                state = 4
+            elif re.match(r'\w+', str1):
+                if is_header_port:
+                    # [case]
+                    # (output wire unsigned out1)
+                    p.name = re.match(r'\w+', str1).group()
+                    str1 = re.sub(r'^\w+', '', str1)
+                elif module.is_ansi_header and not is_header_port:
+                    print('Error: port defined in both inside and outside module header')
+                    print('State = %d, text = %s' % (state, str1))
+                    exit(1)
+                elif not module.is_ansi_header and not is_header_port:
+                    # port already generated when parsing header
+                    for each_port in m.ports:
+                        if each_port.name == p.name:
+                            each_port.direction = p.direction
+                            each_port.net_type = p.net_type
+                            each_port.signing = p.signing
+                        else:
+                            print('Error: port declared outside the header is not declared inside the header!')
+                            print('State = %d, port = %s' % (state, re.match(r'\w+', str1).group()))
+                            exit(1)
+                    str1 = re.sub(r'^\w+', '', str1)
+                state = 7
+            else:
+                print('Error: got unknown string in port declaration!')
+                print('State = %d, text = %s' % (state, str1))
+                exit(1)
+        elif state == 4:
+            # waiting for upper range
+            if re.search(r':', str1):
+                p.up_range += re.match(r'(.*?):', str1).group(1)
+                str1 = re.sub(r'(.*?):', '', str1)
+                state = 5
+            else:
+                p.up_range += str1
+                str1 = ''
+        elif state == 5:
+            # waiting for lower range
+            if re.search(r']', str1):
+                p.lo_range += re.match(r'(.*?)]', str1).group(1)
+                str1 = re.sub(r'(.*?)]', '', str1)
+                state = 6
+            else:
+                p.lo_range += str1
+                str1 = ''
+        elif state == 6:
+            if re.match(r'\w+', str1):
+                if is_header_port:
+                    # [case]
+                    # (output wire unsigned [5:0] out1)
+                    p.name = re.match(r'\w+', str1).group()
+                    str1 = re.sub(r'^\w+', '', str1)
+                elif module.is_ansi_header and not is_header_port:
+                    print('Error: port defined in both inside and outside module header')
+                    print('State = %d, text = %s' % (state, str1))
+                    exit(1)
+                elif not module.is_ansi_header and not is_header_port:
+                    # port already generated when parsing header
+                    for each_port in m.ports:
+                        if each_port.name == p.name:
+                            each_port.direction = p.direction
+                            each_port.net_type = p.net_type
+                            each_port.signing = p.signing
+                            each_port.up_range = p.up_range
+                            each_port.lo_range = p.lo_range
+                        else:
+                            print('Error: port declared outside the header is not declared inside the header!')
+                            print('State = %d, port = %s' % (state, p.name))
+                            exit(1)
+                    str1 = re.sub(r'^\w+', '', str1)
+                state = 7
+            else:
+                print('Error: got unknown string in port declaration!')
+                print('State = %d, text = %s' % (state, str1))
+                exit(1)
+        elif state == 7:
+            port_list.append(p)
+            if str1 == ';':
+                state = 0
+                str1 = ''
+            elif str1 == ',':
+                state = 8
+                str1 = ''
+            elif idx1 == len(content_list) and str1 == '':
+                state = 0
+            else:
+                print('Error: port declaration may be not completed!')
+                print('State = %d, text = %s' % (state, str1))
+                exit(1)
+        elif state == 8:
+            if re.match(r'output|input|inout', str1) and is_header_port:
+                state = 0
+                # keep str1
+            elif re.match(r'wire|bit|logic|reg', str1) and is_header_port:
+                state = 0
+                # keep str1
+            elif re.match(r'signed|unsigned', str1) and is_header_port:
+                state = 0
+                # keep str1
+            elif re.match(r'\w+', str1):
+                # [case]
+                # output wire [3:0] A,B,C,D;
+                if is_header_port:
+                    # [case]
+                    # (output wire unsigned [5:0] out1,out2,out3)
+                    p.name = re.match(r'\w+', str1).group()
+                    str1 = re.sub(r'^\w+', '', str1)
+                elif module.is_ansi_header and not is_header_port:
+                    print('Error: port defined in both inside and outside module header')
+                    print('State = %d, text = %s' % (state, str1))
+                    exit(1)
+                elif not module.is_ansi_header and not is_header_port:
+                    # port already generated when parsing header
+                    for each_port in m.ports:
+                        if each_port.name == p.name:
+                            each_port.direction = p.direction
+                            each_port.net_type = p.net_type
+                            each_port.signing = p.signing
+                            each_port.up_range = p.up_range
+                            each_port.lo_range = p.lo_range
+                        else:
+                            print('Error: port declared outside the header is not declared inside the header!')
+                            print('State = %d, port = %s' % (state, p.name))
+                            exit(1)
+                    str1 = re.sub(r'^\w+', '', str1)
+                state = 7
+            else:
+                print('Error: got unknown string in port declaration!')
+                print('State = %d, text = %s' % (state, str1))
+                exit(1)
+        else:
+            print('Error: got unknown string in port declaration!')
+            print('State = %d, text = %s' % (state, str1))
+            exit(1)
+    if state != 0:
+        print('Error: maybe parameter declaration not completed, check your code!')
+        print('State = %d, text = %s' % (state, str1))
+
+
+def parse_comment(line_list):
+    """
+    The function parse_comment(line_list) is used to filter out the comment in the verilog file.
+    :param line_list: string list with the input text from file
+    :return content_list: string list without comment
+    """
+    line_num = 0
+    content_list = []
+    inside_comment = False
+    str_list1 = []
+    while line_num < len(line_list):
+        valid_content = line_list[line_num]
+        if re.match(r'//\s+\[VlogAutoInst]', valid_content):
+            content_list.append(re.match(r'//\s+\[VlogAutoInst].*$', valid_content).group())
+            line_num += 1
+            continue
+        while True:
+            if inside_comment is True:
+                # to check whether there is a '*/'
+                m1 = re.search(r'\*/.*$', valid_content)
+                if m1 is not None:
+                    valid_content = re.sub(r'^.*\*/', '', valid_content)
+                    inside_comment = False
+                    continue
+                else:
+                    valid_content = ''
+                    break
+            else:  # inside_comment is False
+                # search '/*'
+                m1 = re.search(r'/\*.*$', valid_content)
+                # search '//'
+                m2 = re.search(r'//.*$', valid_content)
+
+                if (m1 is not None) and (m2 is not None):
+                    if m1.span()[0] < m2.span()[0]:
+                        # '/*' ahead, '//' will be omitted
+                        if re.search(r'/\*.*?\*/', valid_content) is not None:
+                            # '/*...*/' found in the same line, remove it and continue
+                            # [NOTE] use the .*? pattern to avoid greedy
+                            # .../*aaa*/.../*bbb*/ will match /*aaa*/ only while not /*aaa*/.../*bbb*/
+                            valid_content = re.sub(r'/\*.*?\*/', '', valid_content)
+                            continue
+                        else:
+                            # remove /*... and set is_in_comment true
+                            valid_content = re.sub(r'/\*.*$', '', valid_content)
+                            inside_comment = True
+                            # break to finish this line
+                            break
+                    else:
+                        # '//' ahead, '/*' will be omitted
+                        valid_content = re.sub(r'//.*$', '', valid_content)
+                        break
+                elif m1 is not None:
+                    # '/*' ahead, '//' will be omitted
+                    if re.search(r'/\*.*?\*/', valid_content) is not None:
+                        # '/*...*/' found in the same line, remove it and continue
+                        # [NOTE] use the .*? pattern to avoid greedy
+                        # .../*aaa*/.../*bbb*/ will match /*aaa*/ only while not /*aaa*/.../*bbb*/
+                        valid_content = re.sub(r'/\*.*?\*/', '', valid_content)
+                        # continue to check the string left
+                        continue
+                    else:
+                        # remove /*... and set is_in_comment true
+                        valid_content = re.sub(r'/\*.*$', '', valid_content)
+                        inside_comment = True
+                        # break to finish this line
+                        break
+                elif m2 is not None:
+                    valid_content = re.sub(r'//.*$', '', valid_content)
+                    # break to finish this line
+                    break
+                else:
+                    # neither '/*' nor '//' exists, keep valid_content and
+                    # break to finish this line
+                    break
+        print(line_num, valid_content)
+        line_num += 1
+        str_list1 = valid_content.split()
+        if str_list1:
+            for each_str in str_list1:
+                content_list += re.split(r'([;,])', each_str)
+    print(content_list)
+    return content_list
+
+
+def parse_module(content_list, parse_all_module, module_name, parse_port_only):
+    """
+    :param content_list: input content without comment
+    :param parse_all_module: type = bool, TRUE: parse all modules; FALSE: parse only one module
+    :param module_name: when parse_all_module is FALSE, parse only the module specified by module_name,
+                        otherwise, this parameter will be ignored
+    :param parse_port_only: type = bool, TRUE: parsing stop till port analysis finished, FALSE: parsing all
+    :return split_cont_list
+    """
+    idx = 0
+    pstate = 0
+    str2 = ''
+    m_list = []
+    while idx < len(content_list):
+        if str2 == '':
+            str2 = content_list[idx]
+            idx += 1
+        if pstate == 0:
+            if str2 == 'module':
+                if parse_all_module is False and module_name != content_list[idx]:
+                    # bypass the not matching module
+                    pstate = 10
+                else:
+                    pstate = 1
+                    m1 = ModuleContList()
+                    m1.m_name = content_list[idx]
+                idx += 1
+            str2 = ''
+        elif pstate == 1:
+            # pstate = 1, already get 'module' and module name
+            if re.match(r'#', str2):
+                pstate = 2
+                m1.is_ansi_header = True
+                str2 = re.sub(r'^#', '', str2)
+                continue
+            elif re.match(r'\(', str2):
+                pstate = 3
+                str2 = re.sub(r'^\(', '', str2)
+                continue
+            elif str2 == ';':
+                # no port in module declaration
+                pstate = 4
+                m1.port_content = []
+            else:
+                print('Error: Syntax error in module definition.')
+        elif pstate == 2:
+            # parameter in module port declaration, only exists in ANSI header
+            if re.match(r'\)', str2):
+                # start with '(' and end with ')'
+                str2 = re.sub(r'^\)', '', str2)
+                pstate = 3
+                continue
+            elif re.match(r'\(', str2):
+                # start with '(' and end with ')'
+                str2 = re.sub(r'^\(', '', str2)
+                continue
+            else:
+                m1.header_param_content.append(str2)
+                str2 = ''
+                continue
+        elif pstate == 3:
+            # state 3, port declaration in module port
+            if str2 == ';':
+                m1.header_port_content.append(str2)
+                pstate = 4
+                str2 = ''
+            else:
+                m1.header_port_content.append(str2)
+                str2 = ''
+        elif pstate == 4:
+            # pstate 4, module declaration done
+            if re.match(r'wire\b|reg\b|logic\b|bit\b', str2):
+                pstate = 5
+                if parse_port_only is False:
+                    m1.type_content.append(str2)
+                str2 = ''
+            elif re.match(r'parameter\b', str2):
+                pstate = 6
+                m1.param_content.append(str2)
+                str2 = ''
+            elif re.match(r'localparam\b', str2):
+                pstate = 7
+                if parse_port_only is False:
+                    m1.localparam_content.append(str2)
+                str2 = ''
+            elif str2 == 'endmodule':
+                m_list.append(m1)
+                if parse_all_module:
+                    pstate = 0
+                    str2 = ''
+                else:
+                    return m_list
+            else:
+                pstate = 4
+                if parse_port_only is False:
+                    m1.block_content.append(str2)
+                str2 = ''
+        elif pstate == 5:
+            if str2 == ';':
+                pstate = 4
+            m1.type_content.append(str2)
+            str2 = ''
+            pstate = 4
+        elif pstate == 6:
+            if str2 == ';':
+                pstate = 4
+            m1.param_content.append(str2)
+            str2 = ''
+        elif pstate == 7:
+            if str2 == ';':
+                pstate = 4
+            m1.localparam_content.append(str2)
+            str2 = ''
+        elif pstate == 10:
+            if str2 == 'endmodule':
+                pstate = 0
+            str2 = ''
+        else:
+            pass
+    return m_list
 
 
 # is_in_comment: show that whether current line is in a block comment region
@@ -324,80 +730,41 @@ parameter_list = []
 localparam_list = []
 point_to_identifier = True
 port_list = []
+module_list = []
 
-while line_num < len(b):
-    valid_content = b[line_num]
-    while True:
-        if is_in_comment is True:
-            # to check whether there is a '*/'
-            m1 = re.search('\*\/.*$', valid_content)
-            if m1 is not None:
-                valid_content = re.sub('^.*\*\/', '', valid_content)
-                is_in_comment = False
-                continue
-            else:
-                valid_content = ''
-                break
-        else:  # is_in_comment is False
-            # search '/*'
-            m1 = re.search('\/\*.*$', valid_content)
-            # search '//'
-            m2 = re.search('\/\/.*$', valid_content)
+f = open('python_test.v', 'r')
+line_num = 0
+b = []
 
-            if (m1 is not None) and (m2 is not None):
-                if m1.span()[0] < m2.span()[0]:
-                    # '/*' ahead, '//' will be omitted
-                    if re.search('\/\*.*?\*\/', valid_content) is not None:
-                        # '/*...*/' found in the same line, remove it and continue
-                        # [NOTE] use the .*? pattern to avoid greedy
-                        # .../*aaa*/.../*bbb*/ will match /*aaa*/ only while not /*aaa*/.../*bbb*/
-                        valid_content = re.sub('\/\*.*?\*\/', '', valid_content)
-                        continue
-                    else:
-                        # remove /*... and set is_in_comment true
-                        valid_content = re.sub('\/\*.*$', '', valid_content)
-                        is_in_comment = True
-                        # break to finish this line
-                        break
-                else:
-                    # '//' ahead, '/*' will be omitted
-                    valid_content = re.sub('\/\/.*$', '', valid_content)
-                    break
-            elif m1 is not None:
-                # '/*' ahead, '//' will be omitted
-                if re.search('\/\*.*?\*\/', valid_content) is not None:
-                    # '/*...*/' found in the same line, remove it and continue
-                    # [NOTE] use the .*? pattern to avoid greedy
-                    # .../*aaa*/.../*bbb*/ will match /*aaa*/ only while not /*aaa*/.../*bbb*/
-                    valid_content = re.sub('\/\*.*?\*\/', '', valid_content)
-                    # continue to check the string left
-                    continue
-                else:
-                    # remove /*... and set is_in_comment true
-                    valid_content = re.sub('\/\*.*$', '', valid_content)
-                    is_in_comment = True
-                    # break to finish this line
-                    break
-            elif m2 is not None:
-                valid_content = re.sub('\/\/.*$', '', valid_content)
-                # break to finish this line
-                break
-            else:
-                # neither '/*' nor '//' exists, keep valid_content and
-                # break to finish this line
-                break
-    print(line_num, valid_content)
-    line_num += 1
-    temp = valid_content.split()
-    if temp != []:
-        content_list += temp
-
-print content_list
+while True:
+    line = f.readline()
+    if not line:
+        break
+    b.append(line)
 
 # now the valid_content is the comment-removed content
 # begin to process
+content_list = parse_comment(b)
 
-m = Module();
+module_content_list = parse_module(content_list, True, '', False)
+
+for module_content in module_content_list:
+    m = Module()
+    if module_content.header_param_content:
+        proc_param_list(module_content.header_param_content, True, False, m.parameters)
+    if module_content.header_port_content:
+        proc_port_list(module_content.header_port_content, True, m.ports, m)
+    if module_content.param_content:
+        proc_param_list(module_content.header_param_content, False, False, m.parameters)
+    if module_content.localparam_content:
+        proc_param_list(module_content.header_param_content, False, True, m.local_parameters)
+    if module_content.port_content:
+        proc_port_list(module_content.port_content, False, m.ports, m)
+
+
+
+
+
 
 idx_module = content_list.index('module')
 
@@ -511,8 +878,11 @@ while str1 != 'endmodule':
         proc_type = 'localparam'
         str1 = proc_para_list(str1)
         continue
-    elif re.match(r'always\b|asisgn\b|initial\b', str1) is not None:
+    elif re.match(r'always\b|assign\b|initial\b', str1) is not None:
         # process block begins
+        break
+    elif re.match(r'\/\/ \[VlogAutoInst\]', str1) is not None:
+        # maybe instantiation
         break
     elif re.match(r'\w+', str1) is not None and proc_type == 'None':
         # maybe instantiation
@@ -521,22 +891,315 @@ while str1 != 'endmodule':
         print('Error: The string is -- ', str1)
         break
 
+# for cell in port_list:
+##    cell = Port()
+#    print(cell.name, cell.direction, cell.signing, cell.net_type, cell.up_range, cell.lo_range)
+#
+# for cell in parameter_list:
+##    cell = Port()
+#    print(cell.name, cell.value)
+#
+# for cell in localparam_list:
+##    cell = Port()
+#    print(cell.name, cell.value)
+
+
+block_list = []
+
+
+class Block:
+
+    def __init__(self):
+        self.type = ''
+        self.content = []
+        self.signal = []
+        pass
+
+
+is_inside_a_block = False
+is_inside_omitted = False
+num_begin = 0
+num_end = 0
+
 # (c) processing block
+while str1 != 'endmodule':
+    if is_inside_a_block is False:
+        if re.match(r'always\b|assign\b|initial\b', str1) is not None:
+            b = Block()
+            if re.match(r'always\b', str1) is not None:
+                b.type = 'always'
+            elif re.match(r'assign\b', str1) is not None:
+                b.type = 'assign'
+            else:
+                b.type = 'initial'
+            b.content.append(str1)
+            block_list.append(b)
+            is_inside_a_block = True
+        elif re.match(r'wire\b|reg\b|parameter\b|localpara\b', str1) is not None:
+            # other wire/reg/parameter declaration, omitted
+            is_inside_omitted = True
+            is_inside_a_block = True
+        else:
+            # maybe instantiation
+            block_list.append(Block())
+            block_list[-1].type = 'instance'
+            block_list[-1].content.append(str1)
+            is_inside_a_block = True
+    else:
+        if is_inside_omitted is True:
+            if re.search(r';', str1) is not None:
+                block_list[-1].content.append(re.match(r'.*?;', str1))
+                str1 = re.sub(r'.*?;', '', str1)
+                is_inside_a_block = False
+                is_inside_omitted = False
+                if str1 != '':
+                    continue
+            else:
+                block_list[-1].content.append(str1)
+        elif block_list[-1].type == 'assign' or block_list[-1].type == 'instance':
+            if re.search(r';', str1) is not None:
+                block_list[-1].content.append(re.match(r'.*?;', str1).group())
+                str1 = re.sub(r'.*?;', '', str1)
+                is_inside_a_block = False
+                if str1 != '':
+                    continue
+            else:
+                block_list[-1].content.append(str1)
+        elif block_list[-1].type == 'always' or block_list[-1].type == 'initial':
+            if num_begin == 0 and re.search(r';', str1) is not None:
+                # never found 'begin' but found ';', end the always block
+                block_list[-1].content.append(re.match(r'.*?;', str1).group())
+                str1 = re.sub(r'.*?;', '', str1)
+                is_inside_a_block = False
+                if str1 != '':
+                    continue
+            elif (num_begin - num_end) == 1 and re.search(r'\bend\b', str1) is not None:
+                # found the final 'end' for the always block, end
+                block_list[-1].content.append(re.match(r'.*?\bend\b', str1).group())
+                str1 = re.sub(r'.*?\bend\b', '', str1)
+                is_inside_a_block = False
+                num_begin = 0
+                num_end = 0
+                if str1 != '':
+                    continue
+            elif re.search(r'\bbegin\b', str1) is not None:
+                block_list[-1].content.append(re.match(r'.*?\bbegin\b', str1).group())
+                str1 = re.sub(r'.*?\bbegin\b', '', str1)
+                num_begin += 1
+                if str1 != '':
+                    continue
+            elif re.search(r'\bend\b', str1) is not None:
+                block_list[-1].content.append(re.match(r'.*?\bend\b', str1).group())
+                str1 = re.sub(r'.*?\bend\b', '', str1)
+                num_end += 1
+                if str1 != '':
+                    continue
+            else:
+                block_list[-1].content.append(str1)
+        else:
+            print("Error: see the block type: " + block_list[-1].type)
+            exit(1)
+    proc_idx += 1
+    str1 = content_list[proc_idx]
 
-for cell in port_list:
-#    cell = Port()
-    print(cell.name, cell.direction, cell.signing, cell.net_type, cell.up_range, cell.lo_range)
+# (d) do the instance analysis
 
-for cell in parameter_list:
-#    cell = Port()
-    print(cell.name, cell.value)
+inst_list = []
 
-for cell in localparam_list:
-#    cell = Port()
-    print(cell.name, cell.value)
+for block_cell in block_list:
+    if block_cell.type != 'instance':
+        continue
+    else:
+        # processing instantiation
+        inst_list.append(Instance())
+        if re.match(r'//\s+\[VlogAutoInst\]', block_cell.content[0]):
+            idx2 = 2
+            inst_list[-1].m_name = block_cell.content[1]
+            str1 = re.sub(r'//\s+\[VlogAutoInst\]\s+', '', block_cell.content[0])
+            info = str1.split()
+            if not info:
+                try:
+                    f = open('./' + inst_list[-1].m_name + '.v', 'r')
+                    f.close()
+                    inst_list[-1].file_name = './' + inst_list[-1].m_name + '.v'
+                except IOError:
+                    try:
+                        f = open('./' + inst_list[-1].m_name + '.sv', 'r')
+                        f.close()
+                        inst_list[-1].file_name = './' + inst_list[-1].m_name + '.sv'
+                    except IOError:
+                        print("Warning: Module file cannot be opened for reading")
+                    pass
+            elif re.search(r'\.v$|.sv$|.vh$|.svh$', info[0]):
+                try:
+                    f = open(info[0], 'r')
+                    f.close()
+                    inst_list[-1].file_name = info[0]
+                except IOError:
+                    print("Warning: Module file cannot be opened for reading")
+            elif re.search(r'\\$', info[0]):
+                try:
+                    f = open(info[0] + inst_list[-1].m_name + '.v', 'r')
+                    f.close()
+                    inst_list[-1].file_name = info[0]
+                except IOError:
+                    print("Warning: Module file cannot be opened for reading")
+            else:
+                try:
+                    f = open(info[0] + '\\' + inst_list[-1].m_name + '.v', 'r')
+                    f.close()
+                    inst_list[-1].file_name = info[0]
+                except IOError:
+                    print("Warning: Module file cannot be opened for reading")
+        else:
+            inst_list[-1].m_name = block_cell.content[0]
+            idx2 = 1
 
-# to match the
-idx_endmodule = content_list.index('endmodule')
+        if re.match(r'#', block_cell.content[idx2]):
+            # parameter
+            str1 = re.sub(r'^#', '', block_cell.content[idx2])
+            idx2 += 1
+            # parsing parameter FSM
+            # state 0:  first '('
+            # state 1:  '.'
+            # state 2:  parameter name
+            # state 3:  '('
+            # state 4:  parameter value
+            # state 5:  ')'
+            # state 6:  ',' or end ')'
+            state = 0
+            while idx2 < len(block_cell.content):
+                if str1 == '':
+                    str1 = block_cell.content[idx2]
+                    idx2 += 1
+                if state == 0 and re.match(r'\(', str1):
+                    state = 1
+                    str1 = re.sub(r'^\(', '', str1)
+                    if str1:
+                        continue
+                elif state == 1 and re.match(r'\.', str1):
+                    state = 2
+                    str1 = re.sub(r'^\.', '', str1)
+                    if str1:
+                        continue
+                elif state == 2 and re.match(r'\w+', str1):
+                    state = 3
+                    p = Parameter()
+                    p.name = re.match(r'\w+', str1).group()
+                    str1 = re.sub(r'^\w+', '', str1)
+                    if str1:
+                        continue
+                elif state == 3 and re.match(r'\(', str1):
+                    state = 4
+                    str1 = re.sub(r'^\(', '', str1)
+                    if str1:
+                        continue
+                elif state == 4 and re.match(r'\w+', str1):
+                    state = 5
+                    p.value = re.match(r'\w+', str1).group()
+                    inst_list[-1].parameters.append(p)
+                    str1 = re.sub(r'^\w+', '', str1)
+                    if str1:
+                        continue
+                elif state == 5 and re.match(r'\)', str1):
+                    state = 6
+                    str1 = re.sub(r'^\)', '', str1)
+                    if str1:
+                        continue
+                elif state == 6 and re.match(r',', str1):
+                    state = 1
+                    str1 = re.sub(r'^,', '', str1)
+                    if str1:
+                        continue
+                elif state == 6 and re.match(r'\)', str1):
+                    state = 0
+                    str1 = re.sub(r'^\)', '', str1)
+                    break
+                else:
+                    print("Error: state = ")
+                    print(state)
+                    print(" string = " + str1)
+                    exit(1)
+        if not str1:
+            str1 = inst_list[-1].content[idx2]
+            idx2 += 1
+        inst_list[-1].i_name = re.match(r'\w+', str1).group()
+        str1 = re.sub(r'^\w+', '', str1)
+
+        if str1 == '':
+            str1 = block_cell.content[idx2]
+            idx2 += 1
+        # parsing port FSM
+        # state 0:  first '('
+        # state 1:  '.'
+        # state 2:  parameter name
+        # state 3:  '('
+        # state 4:  parameter value
+        # state 5:  ')'
+        # state 6:  ',' or end ')'
+        state = 0
+
+        while (idx2 < len(block_cell.content)) or (idx2 == len(block_cell.content) and not str1):
+            if str1 == '':
+                str1 = block_cell.content[idx2]
+                idx2 += 1
+            if state == 0 and re.match(r'\(', str1):
+                state = 1
+                str1 = re.sub(r'^\(', '', str1)
+                if str1:
+                    continue
+            elif state == 1 and re.match(r'\.', str1):
+                state = 2
+                str1 = re.sub(r'^\.', '', str1)
+                if str1:
+                    continue
+            elif state == 2 and re.match(r'\w+', str1):
+                state = 3
+                p = Parameter()
+                p.name = re.match(r'\w+', str1).group()
+                str1 = re.sub(r'^\w+', '', str1)
+                if str1:
+                    continue
+            elif state == 3 and re.match(r'\(', str1):
+                state = 4
+                str1 = re.sub(r'^\(', '', str1)
+                if str1:
+                    continue
+            elif state == 4 and re.match(r'\w+', str1):
+                state = 5
+                p.value = re.match(r'\w+', str1).group()
+                inst_list[-1].mapping.append(p)
+                str1 = re.sub(r'^\w+', '', str1)
+                if str1:
+                    continue
+            elif state == 5 and re.match(r'\)', str1):
+                state = 6
+                str1 = re.sub(r'^\)', '', str1)
+                if str1:
+                    continue
+            elif state == 6 and re.match(r',', str1):
+                state = 1
+                str1 = re.sub(r'^,', '', str1)
+                if str1:
+                    continue
+            elif state == 6 and re.match(r'\)', str1):
+                state = 7
+                str1 = re.sub(r'^\)', '', str1)
+                if str1:
+                    continue
+            elif state == 7 and re.match(r';', str1):
+                state = 0
+                str1 = re.sub(r'^;', '', str1)
+                if str1:
+                    continue
+            else:
+                print("Error: state = ")
+                print(state)
+                print(" string = " + str1)
+                exit(1)
+
+print(inst_list)
+
 
 # m.name = content_list[idx_module+1]
 #
