@@ -17,6 +17,8 @@ class Module:
         self.reg_signals = []
         self.wire_signals = []
         self.is_ansi_header = True
+        self.block_list = []
+        self.instance_list = []
         pass
 
 
@@ -96,7 +98,9 @@ class ModuleContList:
         self.type_content = []
         self.localparam_content = []
         self.block_content = []
+        self.block_list = []
         pass
+
 
 class Block:
 
@@ -105,6 +109,7 @@ class Block:
         self.content = []
         self.signal = []
         pass
+
 
 def proc_param_list(text_list=None, is_header_param=False, is_local_param=False, param_list=None):
     """
@@ -519,6 +524,322 @@ def proc_port_list(text_list=None, is_header_port=False, port_list=None, module=
         print('State = %d, text = %s' % (state, str1))
 
 
+def proc_block_list(text_list=None, block_list=None, inst_list=None):
+    """
+    :param text_list, type = string list, all the block content
+    :param block_list, type = list of Block, used to return
+    :param inst_list, type = instance list
+    """
+    idx1 = 0
+    str1 = ''
+    is_inside_a_block = False
+    is_inside_omitted = False
+    num_begin = 0
+    num_end = 0
+    state = 0
+    while idx1 < len(text_list):
+        while str1 == '' and idx1 < len(text_list):
+            str1 = text_list[idx1]
+            idx1 += 1
+        if state == 0:
+            if re.match(r'always\b|assign\b|initial\b', str1):
+                b = Block()
+                if re.match(r'always\b', str1) is not None:
+                    b.type = 'always'
+                    state = 1
+                elif re.match(r'assign\b', str1) is not None:
+                    b.type = 'assign'
+                    state = 2
+                else:
+                    b.type = 'initial'
+                    state = 1
+                b.content.append(str1)
+                block_list.append(b)
+            else:
+                # instance
+                i = Instance()
+                i.content.append(str1)
+                inst_list.append(i)
+                state = 3
+            str1 = ''
+        elif state == 1:
+            if num_begin == 0 and str1 == ';':
+                # never found 'begin' but found ';', end the always block
+                block_list[-1].content.append(str1)
+                str1 = ''
+                state = 0
+            elif (num_begin - num_end) == 1 and str1 == 'end':
+                # found the final 'end' for the always block, end
+                block_list[-1].content.append(str1)
+                str1 = ''
+                num_begin = 0
+                num_end = 0
+                state = 0
+            elif re.search(r'\bbegin\b', str1):
+                block_list[-1].content.append(re.match(r'.*?\bbegin\b', str1).group())
+                str1 = re.sub(r'.*?\bbegin\b', '', str1)
+                num_begin += 1
+            elif re.search(r'\bend\b', str1):
+                block_list[-1].content.append(re.match(r'.*?\bend\b', str1).group())
+                str1 = re.sub(r'.*?\bend\b', '', str1)
+                num_end += 1
+            else:
+                block_list[-1].content.append(str1)
+                str1 = ''
+        elif state == 2:
+            if str1 == ';':
+                state = 0
+            block_list[-1].content.append(str1)
+            str1 = ''
+        elif state == 3:
+            if str1 == ';':
+                state = 0
+            inst_list[-1].content.append(str1)
+            str1 = ''
+    if state != 0:
+        print('Error: maybe block declaration not completed, check your code!')
+        print('State = %d, text = %s' % (state, str1))
+
+
+def proc_inst_list(inst_list=None):
+    for inst in inst_list:
+        idx1 = 0
+        str1 = ''
+        state = 0
+        while idx1 < len(inst.content):
+            while str1 == '' and idx1 < len(inst.content):
+                str1 = inst.content[idx1]
+                idx1 += 1
+            if state == 0:
+                if re.match(r'//\s+\[VlogAutoInst]', str1):
+                    # process the INFO line
+                    inst.auto_inst = True
+                    inst.m_name = inst.content[idx1]
+                    idx1 += 1
+                    str1 = re.sub(r'//\s+\[VlogAutoInst]\s+', '', str1)
+                    info = str1.split()
+                    if not info:
+                        try:
+                            f1 = open('./' + inst.m_name + '.v', 'r')
+                            f1.close()
+                            inst.file_name = './' + inst.m_name + '.v'
+                            state = 1
+                        except IOError:
+                            try:
+                                f1 = open('./' + inst.m_name + '.sv', 'r')
+                                f1.close()
+                                inst.file_name = './' + inst_list.m_name + '.sv'
+                                state = 1
+                            except IOError:
+                                print("Warning: Module file cannot be opened for reading")
+                                inst.auto_inst = False
+                                state = 2
+                                pass
+                    elif re.search(r'\.v$|.sv$|.vh$|.svh$', info[0]):
+                        try:
+                            f1 = open(info[0], 'r')
+                            f1.close()
+                            inst.file_name = info[0]
+                            state = 1
+                        except IOError:
+                            print("Warning: Module file cannot be opened for reading")
+                            inst.auto_inst = False
+                            state = 2
+                    elif re.search(r'\\$', info[0]):
+                        try:
+                            f1 = open(info[0] + inst.m_name + '.v', 'r')
+                            f1.close()
+                            inst.file_name = info[0]
+                            state = 1
+                        except IOError:
+                            print("Warning: Module file cannot be opened for reading")
+                            inst.auto_inst = False
+                            state = 2
+                    else:
+                        try:
+                            f1 = open(info[0] + '\\' + inst.m_name + '.v', 'r')
+                            f1.close()
+                            inst.file_name = info[0]
+                            state = 1
+                        except IOError:
+                            print("Warning: Module file cannot be opened for reading")
+                            inst.auto_inst = False
+                            state = 2
+                else:
+                    inst.auto_inst = False
+                    inst.m_name = str1
+                    str1 = ''
+                    state = 2
+            elif state == 1:
+                # Auto instance
+                if re.match(r'#', str1):
+                    # parameter
+                    str1 = re.sub(r'^#', '', str1)
+                    state = 3
+                elif re.match(r'\w+', str1):
+                    # instance name
+                    inst.i_name = re.match(r'\w+', str1).group()
+                    str1 = re.sub(r'^\w+', '', str1)
+                    state = 11
+                elif re.match(r'\(', str1):
+                    # missing instance name
+                    str1 = re.sub(r'^\(', '', str1)
+                    state = 12
+                else:
+                    print('Error: In instance processing, wrong string input!')
+                    print(' state = %s, string = %s' % (state, str1))
+                    exit(1)
+            elif state == 3:
+                if re.match(r'\(', str1):
+                    str1 = re.sub(r'^\(', '', str1)
+                    state = 4
+                else:
+                    print('Error: In instance processing, wrong string input!')
+                    print(' state = %s, string = %s' % (state, str1))
+                    exit(1)
+            elif state == 4:
+                if re.match(r'\.', str1):
+                    str1 = re.sub(r'^\.', '', str1)
+                    state = 5
+                else:
+                    print('Error: In instance processing, wrong string input!')
+                    print(' state = %s, string = %s' % (state, str1))
+                    exit(1)
+            elif state == 5:
+                if re.match(r'\w+', str1):
+                    p = Parameter()
+                    p.name = re.match(r'\w+', str1).group()
+                    str1 = re.sub(r'^\w+', '', str1)
+                    state = 6
+                else:
+                    print('Error: In instance processing, wrong string input!')
+                    print(' state = %s, string = %s' % (state, str1))
+                    exit(1)
+            elif state == 6:
+                if re.match(r'\(', str1):
+                    str1 = re.sub(r'^\(', '', str1)
+                    state = 7
+                else:
+                    print('Error: In instance processing, wrong string input!')
+                    print(' state = %s, string = %s' % (state, str1))
+                    exit(1)
+            elif state == 7:
+                if re.match(r'\w+', str1):
+                    p.value = re.match(r'\w+', str1).group()
+                    inst.parameters.append(p)
+                    str1 = re.sub(r'^\w+', '', str1)
+                    state = 8
+                else:
+                    print('Error: In instance processing, wrong string input!')
+                    print(' state = %s, string = %s' % (state, str1))
+                    exit(1)
+            elif state == 8:
+                if re.match(r'\)', str1):
+                    str1 = re.sub(r'^\)', '', str1)
+                    state = 9
+                else:
+                    print('Error: In instance processing, wrong string input!')
+                    print(' state = %s, string = %s' % (state, str1))
+                    exit(1)
+            elif state == 9:
+                if re.match(r',', str1):
+                    str1 = re.sub(r'^,', '', str1)
+                    state = 4
+                elif re.match(r'\)', str1):
+                    str1 = re.sub(r'^\)', '', str1)
+                    state = 10
+                else:
+                    print('Error: In instance processing, wrong string input!')
+                    print(' state = %s, string = %s' % (state, str1))
+                    exit(1)
+            elif state == 10:
+                if re.match(r'\w+', str1):
+                    str1 = re.sub(r'^\w+', '', str1)
+                    state = 11
+                elif re.match(r'\(', str1):
+                    str1 = re.sub(r'^\(', '', str1)
+                    state = 12
+                else:
+                    print('Error: In instance processing, wrong string input!')
+                    print(' state = %s, string = %s' % (state, str1))
+                    exit(1)
+            elif state == 11:
+                if re.match(r'\(', str1):
+                    str1 = re.sub(r'^\(', '', str1)
+                    state = 12
+                else:
+                    print('Error: In instance processing, wrong string input!')
+                    print(' state = %s, string = %s' % (state, str1))
+                    exit(1)
+            elif state == 12:
+                if re.match(r'\.', str1):
+                    str1 = re.sub(r'^\.', '', str1)
+                    state = 13
+                else:
+                    print('Error: In instance processing, wrong string input!')
+                    print(' state = %s, string = %s' % (state, str1))
+                    exit(1)
+            elif state == 13:
+                if re.match(r'\w+', str1):
+                    p = Parameter()
+                    p.name = re.match(r'\w+', str1).group()
+                    str1 = re.sub(r'^\w+', '', str1)
+                    state = 14
+                else:
+                    print('Error: In instance processing, wrong string input!')
+                    print(' state = %s, string = %s' % (state, str1))
+                    exit(1)
+            elif state == 14:
+                if re.match(r'\(', str1):
+                    str1 = re.sub(r'^\(', '', str1)
+                    state = 15
+                else:
+                    print('Error: In instance processing, wrong string input!')
+                    print(' state = %s, string = %s' % (state, str1))
+                    exit(1)
+            elif state == 15:
+                if re.match(r'\w+', str1):
+                    p.value = re.match(r'\w+', str1).group()
+                    inst.mapping.append(p)
+                    str1 = re.sub(r'^\w+', '', str1)
+                    state = 16
+                else:
+                    print('Error: In instance processing, wrong string input!')
+                    print(' state = %s, string = %s' % (state, str1))
+                    exit(1)
+            elif state == 16:
+                if re.match(r'\)', str1):
+                    str1 = re.sub(r'^\)', '', str1)
+                    state = 17
+                else:
+                    print('Error: In instance processing, wrong string input!')
+                    print(' state = %s, string = %s' % (state, str1))
+                    exit(1)
+            elif state == 17:
+                if re.match(r',', str1):
+                    state = 12
+                    str1 = re.sub(r'^,', '', str1)
+                elif re.match(r'\)', str1):
+                    state = 18
+                    str1 = re.sub(r'^\)', '', str1)
+                else:
+                    print('Error: In instance processing, wrong string input!')
+                    print(' state = %s, string = %s' % (state, str1))
+                    exit(1)
+            elif state == 18:
+                if str1 == ';':
+                    state = 0
+                    str1 = ''
+                else:
+                    print('Error: In instance processing, wrong string input!')
+                    print(' state = %s, string = %s' % (state, str1))
+                    exit(1)
+            else:
+                print('Error: In instance processing, wrong string input!')
+                print(' state = %s, string = %s' % (state, str1))
+                exit(1)
+
+
 def parse_comment(line_list):
     """
     The function parse_comment(line_list) is used to filter out the comment in the verilog file.
@@ -779,313 +1100,27 @@ for module_content in module_content_list:
         proc_param_list(module_content.header_param_content, False, True, m.local_parameters)
     if module_content.port_content:
         proc_port_list(module_content.port_content, False, m.ports, m)
+    # separate block content into 'always'/'initial'/'assign'/'instance' sub-blocks
+    if module_content.block_content:
+        proc_block_list(module_content.block_content, module_content.block_list, m.instance_list)
 
-for each in m.parameters:
-    print('parameter %s = %s' % (each.name, each.value))
-for each in m.ports:
-    print('%s %s %s [%s:%s] %s;' % (each.direction, each.net_type, each.signing, each.up_range, each.lo_range, each.name) )
+    proc_inst_list(m.instance_list)
+    pass
 
+#for each in m.parameters:
+#    print('parameter %s = %s' % (each.name, each.value))
+#for each in m.ports:
+#    print('%s %s %s [%s:%s] %s;' % (
+#        each.direction, each.net_type, each.signing, each.up_range, each.lo_range, each.name))
 
-# for cell in port_list:
-##    cell = Port()
-#    print(cell.name, cell.direction, cell.signing, cell.net_type, cell.up_range, cell.lo_range)
-#
-# for cell in parameter_list:
-##    cell = Port()
-#    print(cell.name, cell.value)
-#
-# for cell in localparam_list:
-##    cell = Port()
-#    print(cell.name, cell.value)
-
-
-block_list = []
-
-
-
-is_inside_a_block = False
-is_inside_omitted = False
-num_begin = 0
-num_end = 0
 
 # (c) processing block
-while str1 != 'endmodule':
-    if is_inside_a_block is False:
-        if re.match(r'always\b|assign\b|initial\b', str1) is not None:
-            b = Block()
-            if re.match(r'always\b', str1) is not None:
-                b.type = 'always'
-            elif re.match(r'assign\b', str1) is not None:
-                b.type = 'assign'
-            else:
-                b.type = 'initial'
-            b.content.append(str1)
-            block_list.append(b)
-            is_inside_a_block = True
-        elif re.match(r'wire\b|reg\b|parameter\b|localpara\b', str1) is not None:
-            # other wire/reg/parameter declaration, omitted
-            is_inside_omitted = True
-            is_inside_a_block = True
-        else:
-            # maybe instantiation
-            block_list.append(Block())
-            block_list[-1].type = 'instance'
-            block_list[-1].content.append(str1)
-            is_inside_a_block = True
-    else:
-        if is_inside_omitted is True:
-            if re.search(r';', str1) is not None:
-                block_list[-1].content.append(re.match(r'.*?;', str1))
-                str1 = re.sub(r'.*?;', '', str1)
-                is_inside_a_block = False
-                is_inside_omitted = False
-                if str1 != '':
-                    continue
-            else:
-                block_list[-1].content.append(str1)
-        elif block_list[-1].type == 'assign' or block_list[-1].type == 'instance':
-            if re.search(r';', str1) is not None:
-                block_list[-1].content.append(re.match(r'.*?;', str1).group())
-                str1 = re.sub(r'.*?;', '', str1)
-                is_inside_a_block = False
-                if str1 != '':
-                    continue
-            else:
-                block_list[-1].content.append(str1)
-        elif block_list[-1].type == 'always' or block_list[-1].type == 'initial':
-            if num_begin == 0 and re.search(r';', str1) is not None:
-                # never found 'begin' but found ';', end the always block
-                block_list[-1].content.append(re.match(r'.*?;', str1).group())
-                str1 = re.sub(r'.*?;', '', str1)
-                is_inside_a_block = False
-                if str1 != '':
-                    continue
-            elif (num_begin - num_end) == 1 and re.search(r'\bend\b', str1) is not None:
-                # found the final 'end' for the always block, end
-                block_list[-1].content.append(re.match(r'.*?\bend\b', str1).group())
-                str1 = re.sub(r'.*?\bend\b', '', str1)
-                is_inside_a_block = False
-                num_begin = 0
-                num_end = 0
-                if str1 != '':
-                    continue
-            elif re.search(r'\bbegin\b', str1) is not None:
-                block_list[-1].content.append(re.match(r'.*?\bbegin\b', str1).group())
-                str1 = re.sub(r'.*?\bbegin\b', '', str1)
-                num_begin += 1
-                if str1 != '':
-                    continue
-            elif re.search(r'\bend\b', str1) is not None:
-                block_list[-1].content.append(re.match(r'.*?\bend\b', str1).group())
-                str1 = re.sub(r'.*?\bend\b', '', str1)
-                num_end += 1
-                if str1 != '':
-                    continue
-            else:
-                block_list[-1].content.append(str1)
-        else:
-            print("Error: see the block type: " + block_list[-1].type)
-            exit(1)
-    proc_idx += 1
-    str1 = content_list[proc_idx]
 
 # (d) do the instance analysis
 
-inst_list = []
 
-for block_cell in block_list:
-    if block_cell.type != 'instance':
-        continue
-    else:
-        # processing instantiation
-        inst_list.append(Instance())
-        if re.match(r'//\s+\[VlogAutoInst]', block_cell.content[0]):
-            idx2 = 2
-            inst_list[-1].m_name = block_cell.content[1]
-            str1 = re.sub(r'//\s+\[VlogAutoInst]\s+', '', block_cell.content[0])
-            info = str1.split()
-            if not info:
-                try:
-                    f = open('./' + inst_list[-1].m_name + '.v', 'r')
-                    f.close()
-                    inst_list[-1].file_name = './' + inst_list[-1].m_name + '.v'
-                except IOError:
-                    try:
-                        f = open('./' + inst_list[-1].m_name + '.sv', 'r')
-                        f.close()
-                        inst_list[-1].file_name = './' + inst_list[-1].m_name + '.sv'
-                    except IOError:
-                        print("Warning: Module file cannot be opened for reading")
-                    pass
-            elif re.search(r'\.v$|.sv$|.vh$|.svh$', info[0]):
-                try:
-                    f = open(info[0], 'r')
-                    f.close()
-                    inst_list[-1].file_name = info[0]
-                except IOError:
-                    print("Warning: Module file cannot be opened for reading")
-            elif re.search(r'\\$', info[0]):
-                try:
-                    f = open(info[0] + inst_list[-1].m_name + '.v', 'r')
-                    f.close()
-                    inst_list[-1].file_name = info[0]
-                except IOError:
-                    print("Warning: Module file cannot be opened for reading")
-            else:
-                try:
-                    f = open(info[0] + '\\' + inst_list[-1].m_name + '.v', 'r')
-                    f.close()
-                    inst_list[-1].file_name = info[0]
-                except IOError:
-                    print("Warning: Module file cannot be opened for reading")
-        else:
-            inst_list[-1].m_name = block_cell.content[0]
-            idx2 = 1
 
-        if re.match(r'#', block_cell.content[idx2]):
-            # parameter
-            str1 = re.sub(r'^#', '', block_cell.content[idx2])
-            idx2 += 1
-            # parsing parameter FSM
-            # state 0:  first '('
-            # state 1:  '.'
-            # state 2:  parameter name
-            # state 3:  '('
-            # state 4:  parameter value
-            # state 5:  ')'
-            # state 6:  ',' or end ')'
-            state = 0
-            while idx2 < len(block_cell.content):
-                if str1 == '':
-                    str1 = block_cell.content[idx2]
-                    idx2 += 1
-                if state == 0 and re.match(r'\(', str1):
-                    state = 1
-                    str1 = re.sub(r'^\(', '', str1)
-                    if str1:
-                        continue
-                elif state == 1 and re.match(r'\.', str1):
-                    state = 2
-                    str1 = re.sub(r'^\.', '', str1)
-                    if str1:
-                        continue
-                elif state == 2 and re.match(r'\w+', str1):
-                    state = 3
-                    p = Parameter()
-                    p.name = re.match(r'\w+', str1).group()
-                    str1 = re.sub(r'^\w+', '', str1)
-                    if str1:
-                        continue
-                elif state == 3 and re.match(r'\(', str1):
-                    state = 4
-                    str1 = re.sub(r'^\(', '', str1)
-                    if str1:
-                        continue
-                elif state == 4 and re.match(r'\w+', str1):
-                    state = 5
-                    p.value = re.match(r'\w+', str1).group()
-                    inst_list[-1].parameters.append(p)
-                    str1 = re.sub(r'^\w+', '', str1)
-                    if str1:
-                        continue
-                elif state == 5 and re.match(r'\)', str1):
-                    state = 6
-                    str1 = re.sub(r'^\)', '', str1)
-                    if str1:
-                        continue
-                elif state == 6 and re.match(r',', str1):
-                    state = 1
-                    str1 = re.sub(r'^,', '', str1)
-                    if str1:
-                        continue
-                elif state == 6 and re.match(r'\)', str1):
-                    state = 0
-                    str1 = re.sub(r'^\)', '', str1)
-                    break
-                else:
-                    print("Error: state = ")
-                    print(state)
-                    print(" string = " + str1)
-                    exit(1)
-        if not str1:
-            str1 = inst_list[-1].content[idx2]
-            idx2 += 1
-        inst_list[-1].i_name = re.match(r'\w+', str1).group()
-        str1 = re.sub(r'^\w+', '', str1)
 
-        if str1 == '':
-            str1 = block_cell.content[idx2]
-            idx2 += 1
-        # parsing port FSM
-        # state 0:  first '('
-        # state 1:  '.'
-        # state 2:  parameter name
-        # state 3:  '('
-        # state 4:  parameter value
-        # state 5:  ')'
-        # state 6:  ',' or end ')'
-        state = 0
-
-        while (idx2 < len(block_cell.content)) or (idx2 == len(block_cell.content) and not str1):
-            if str1 == '':
-                str1 = block_cell.content[idx2]
-                idx2 += 1
-            if state == 0 and re.match(r'\(', str1):
-                state = 1
-                str1 = re.sub(r'^\(', '', str1)
-                if str1:
-                    continue
-            elif state == 1 and re.match(r'\.', str1):
-                state = 2
-                str1 = re.sub(r'^\.', '', str1)
-                if str1:
-                    continue
-            elif state == 2 and re.match(r'\w+', str1):
-                state = 3
-                p = Parameter()
-                p.name = re.match(r'\w+', str1).group()
-                str1 = re.sub(r'^\w+', '', str1)
-                if str1:
-                    continue
-            elif state == 3 and re.match(r'\(', str1):
-                state = 4
-                str1 = re.sub(r'^\(', '', str1)
-                if str1:
-                    continue
-            elif state == 4 and re.match(r'\w+', str1):
-                state = 5
-                p.value = re.match(r'\w+', str1).group()
-                inst_list[-1].mapping.append(p)
-                str1 = re.sub(r'^\w+', '', str1)
-                if str1:
-                    continue
-            elif state == 5 and re.match(r'\)', str1):
-                state = 6
-                str1 = re.sub(r'^\)', '', str1)
-                if str1:
-                    continue
-            elif state == 6 and re.match(r',', str1):
-                state = 1
-                str1 = re.sub(r'^,', '', str1)
-                if str1:
-                    continue
-            elif state == 6 and re.match(r'\)', str1):
-                state = 7
-                str1 = re.sub(r'^\)', '', str1)
-                if str1:
-                    continue
-            elif state == 7 and re.match(r';', str1):
-                state = 0
-                str1 = re.sub(r'^;', '', str1)
-                if str1:
-                    continue
-            else:
-                print("Error: state = ")
-                print(state)
-                print(" string = " + str1)
-                exit(1)
-
-print(inst_list)
 
 # m.name = content_list[idx_module+1]
 #
@@ -1119,4 +1154,3 @@ print(inst_list)
 #    a.link_cell(b)
 #
 
-print m.name
