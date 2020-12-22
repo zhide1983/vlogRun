@@ -1105,7 +1105,6 @@ for module_content in module_content_list:
         proc_block_list(module_content.block_content, module_content.block_list, m.instance_list)
 
     proc_inst_list(m.instance_list)
-    pass
 
 #for each in m.parameters:
 #    print('parameter %s = %s' % (each.name, each.value))
