@@ -661,13 +661,15 @@ def proc_inst_list(inst_list=None):
                     info = str1.split()
                     if not info:
                         try:
-                            f1 = open('./' + inst.m_name + '.v', 'r')
-                            inst.file_name = './' + inst.m_name + '.v'
+                            file_name = './' + inst.m_name + '.v'
+                            f1 = open(file_name, 'r')
+                            inst.file_name = file_name
                             state = 1
                         except IOError:
                             try:
-                                f1 = open('./' + inst.m_name + '.sv', 'r')
-                                inst.file_name = './' + inst_list.m_name + '.sv'
+                                file_name = './' + inst.m_name + '.sv'
+                                f1 = open(file_name, 'r')
+                                inst.file_name = file_name
                                 state = 1
                             except IOError:
                                 print("Warning: Module file cannot be opened for reading")
@@ -683,10 +685,11 @@ def proc_inst_list(inst_list=None):
                             print("Warning: Module file cannot be opened for reading")
                             inst.auto_inst = False
                             state = 20
-                    elif re.search(r'\\$', info[0]):
+                    elif re.search(r'/$', info[0]):
                         try:
-                            f1 = open(info[0] + inst.m_name + '.v', 'r')
-                            inst.file_name = info[0]
+                            file_name = info[0] + inst.m_name + '.v'
+                            f1 = open(file_name, 'r')
+                            inst.file_name = file_name
                             state = 1
                         except IOError:
                             print("Warning: Module file cannot be opened for reading")
@@ -694,8 +697,9 @@ def proc_inst_list(inst_list=None):
                             state = 20
                     else:
                         try:
-                            f1 = open(info[0] + '\\' + inst.m_name + '.v', 'r')
-                            inst.file_name = info[0]
+                            file_name = info[0] + '/' + inst.m_name + '.v'
+                            f1 = open(file_name, 'r')
+                            inst.file_name = file_name
                             state = 1
                         except IOError:
                             print("Warning: Module file cannot be opened for reading")
@@ -733,6 +737,7 @@ def proc_inst_list(inst_list=None):
                     print('Warning: cannot find module in the file' + inst.file_name)
                     inst.auto_inst = False
                     state = 20
+                str1 = ''
             elif state == 2:
                 # Auto instance
                 if re.match(r'#', str1):
