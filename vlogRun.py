@@ -1001,7 +1001,6 @@ def parse_comment(line_list):
         if str_list1:
             for each_str in str_list1:
                 content_list += re.split(r'([;,])', each_str)
-    print(content_list)
     return content_list
 
 
@@ -1111,7 +1110,6 @@ def parse_module(content_list, parse_all_module, module_name, parse_port_only):
                 pstate = 4
             m1.type_content.append(str2)
             str2 = ''
-            pstate = 4
         elif pstate == 6:
             if str2 == ';':
                 pstate = 4
