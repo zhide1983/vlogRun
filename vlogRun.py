@@ -1,5 +1,5 @@
 import re
-
+import sys
 
 # the code below is the same as in the vim script
 
@@ -1115,150 +1115,114 @@ def parse_module(content_list, parse_all_module, module_name, parse_port_only):
     return m_list
 
 
-f = open('python_test.v', 'r')
-line_num = 0
-b = []
+def main():
+    try:
+        f = open(sys.argv[1], 'r')
+    except IOError:
+        print('Error: Cannot open file: ' + sys.argv[1])
+    b = []
 
-while True:
-    line = f.readline()
-    if not line:
-        break
-    b.append(line)
+    while True:
+        line = f.readline()
+        if not line:
+            break
+        b.append(line)
 
-# now the valid_content is the comment-removed content
-# begin to process
-content_list = parse_comment(b)
+    # now the valid_content is the comment-removed content
+    # begin to process
+    content_list = parse_comment(b)
 
-module_content_list = parse_module(content_list, True, '', False)
+    module_content_list = parse_module(content_list, True, '', False)
 
-for module_content in module_content_list:
-    m = Module()
-    if module_content.header_param_content:
-        proc_param_list(module_content.header_param_content, True, False, m.parameters)
-    if module_content.header_port_content:
-        proc_port_list(module_content.header_port_content, True, m.ports, m)
-    if module_content.param_content:
-        proc_param_list(module_content.param_content, False, False, m.parameters)
-    if module_content.localparam_content:
-        proc_param_list(module_content.localparam_content, False, True, m.local_parameters)
-    if module_content.port_content:
-        proc_port_list(module_content.port_content, False, m.ports, m)
-    # separate block content into 'always'/'initial'/'assign'/'instance' sub-blocks
-    if module_content.block_content:
-        proc_block_list(module_content.block_content, module_content.block_list, m.instance_list)
+    for module_content in module_content_list:
+        m = Module()
+        if module_content.header_param_content:
+            proc_param_list(module_content.header_param_content, True, False, m.parameters)
+        if module_content.header_port_content:
+            proc_port_list(module_content.header_port_content, True, m.ports, m)
+        if module_content.param_content:
+            proc_param_list(module_content.param_content, False, False, m.parameters)
+        if module_content.localparam_content:
+            proc_param_list(module_content.localparam_content, False, True, m.local_parameters)
+        if module_content.port_content:
+            proc_port_list(module_content.port_content, False, m.ports, m)
+        # separate block content into 'always'/'initial'/'assign'/'instance' sub-blocks
+        if module_content.block_content:
+            proc_block_list(module_content.block_content, module_content.block_list, m.instance_list)
 
-    proc_inst_list(m.instance_list)
+        proc_inst_list(m.instance_list)
 
-    print('output auto instantiation')
-    print('-------------------------')
+        print('output auto instantiation')
+        print('-------------------------')
 
-    for inst in m.instance_list:
-        if inst.i_param:
-            print(inst.m_name + ' #(')
-            for each_param in inst.i_param:
-                last = each_param == inst.i_param[-1]
-                if last:
-                    print('    .' + each_param.name + ' '*(23-len(each_param.name))
-                          + '(' + each_param.value + ' '*(23-len(each_param.value)) + ')')
-                else:
-                    print('    .' + each_param.name + ' ' * (23 - len(each_param.name))
-                      + '(' + each_param.value + ' ' * (23 - len(each_param.value)) + '),')
-            print(') ' + inst.i_name + ' (')
-        else:
-            print(inst.m_name + ' ' + inst.i_name + ' (')
-        for each_port in inst.m_port:
-            last = each_port == inst.m_port[-1]
-            if each_port.direction == 'output' or each_port.direction == 'inout':
-                w = Net()
-                w.net_type = 'wire'
-                if inst.i_port.has_key(each_port.name):
-                    w.name = inst.i_port[each_port.name]
-                else:
-                    w.name = each_port.name
-                w.up_range = each_port.up_range
-                w.lo_range = each_port.lo_range
-                m.nets.append(w)
-                if last:
-                    print('    .' + each_port.name + ' '*(23-len(each_port.name))
-                          + '(' + w.name + ' '*(23-len(w.name)) + ')')
-                else:
-                    print('    .' + each_port.name + ' ' * (23 - len(each_port.name))
-                          + '(' + w.name + ' ' * (23 - len(w.name)) + '),')
+        for inst in m.instance_list:
+            if inst.i_param:
+                print(inst.m_name + ' #(')
+                for each_param in inst.i_param:
+                    last = each_param == inst.i_param[-1]
+                    if last:
+                        print('    .' + each_param.name + ' '*(23-len(each_param.name))
+                              + '(' + each_param.value + ' '*(23-len(each_param.value)) + ')')
+                    else:
+                        print('    .' + each_param.name + ' ' * (23 - len(each_param.name))
+                          + '(' + each_param.value + ' ' * (23 - len(each_param.value)) + '),')
+                print(') ' + inst.i_name + ' (')
             else:
-                w = Net()
-                w.net_type = 'wire'
-                if inst.i_port.has_key(each_port.name):
-                    w.name = inst.i_port[each_port.name]
+                print(inst.m_name + ' ' + inst.i_name + ' (')
+            for each_port in inst.m_port:
+                last = each_port == inst.m_port[-1]
+                if each_port.direction == 'output' or each_port.direction == 'inout':
+                    w = Net()
+                    w.net_type = 'wire'
+                    if inst.i_port.has_key(each_port.name):
+                        w.name = inst.i_port[each_port.name]
+                    else:
+                        w.name = each_port.name
+                    w.up_range = each_port.up_range
+                    w.lo_range = each_port.lo_range
+                    m.nets.append(w)
+                    if last:
+                        print('    .' + each_port.name + ' '*(23-len(each_port.name))
+                              + '(' + w.name + ' '*(23-len(w.name)) + ')')
+                    else:
+                        print('    .' + each_port.name + ' ' * (23 - len(each_port.name))
+                              + '(' + w.name + ' ' * (23 - len(w.name)) + '),')
                 else:
-                    w.name = each_port.name
-                w.up_range = each_port.up_range
-                w.lo_range = each_port.lo_range
-                m.nets.append(w)
-                if last:
-                    print('    .' + each_port.name + ' ' * (23 - len(each_port.name))
-                          + '(' + w.name + ' ' * (23 - len(w.name)) + ')')
+                    w = Net()
+                    w.net_type = 'wire'
+                    if inst.i_port.has_key(each_port.name):
+                        w.name = inst.i_port[each_port.name]
+                    else:
+                        w.name = each_port.name
+                    w.up_range = each_port.up_range
+                    w.lo_range = each_port.lo_range
+                    m.nets.append(w)
+                    if last:
+                        print('    .' + each_port.name + ' ' * (23 - len(each_port.name))
+                              + '(' + w.name + ' ' * (23 - len(w.name)) + ')')
+                    else:
+                        print('    .' + each_port.name + ' ' * (23 - len(each_port.name))
+                              + '(' + w.name + ' ' * (23 - len(w.name)) + '),')
+            print(');')
+
+            print('output signal width inferrer')
+            print('----------------------------')
+
+            # todo: the case that up_range/lo_range are parameter or define
+            for net in m.nets:
+                if net.lo_range:
+                    ts = net.net_type + ' [' + net.up_range + ':' + net.lo_range + ']'
+                    ts += ' ' * (24 - len(ts))
+                    ts += net.name + ';'
                 else:
-                    print('    .' + each_port.name + ' ' * (23 - len(each_port.name))
-                          + '(' + w.name + ' ' * (23 - len(w.name)) + '),')
-        print(');')
+                    ts = net.net_type
+                    ts += ' ' * (24 - len(ts))
+                    ts += net.name + ';'
+                print(ts)
 
-        print('output signal width inferrer')
-        print('----------------------------')
-
-        # todo: the case that up_range/lo_range are parameter or define
-        for net in m.nets:
-            if net.lo_range:
-                ts = net.net_type + ' [' + net.up_range + ':' + net.lo_range + ']'
-                ts += ' ' * (24 - len(ts))
-                ts += net.name + ';'
-            else:
-                ts = net.net_type
-                ts += ' ' * (24 - len(ts))
-                ts += net.name + ';'
-            print(ts)
-
-    pass
-
-# for each in m.parameters:
-#    print('parameter %s = %s' % (each.name, each.value))
-# for each in m.ports:
-#    print('%s %s %s [%s:%s] %s;' % (
-#        each.direction, each.net_type, each.signing, each.up_range, each.lo_range, each.name))
+        pass
 
 
-# (c) processing block
+if __name__ == '__main__':
+    main()
 
-# (d) do the instance analysis
-
-
-# m.name = content_list[idx_module+1]
-#
-#    if valid_content is None:
-#        break
-#    elif re.match('\s*$', valid_content) is None:
-#        break
-#
-#    if is_in_module is False:
-#        # todo: processing outside the module
-#        if re.search(r'\bmodule\b', valid_content) is None:
-#            # wait till 'module' keyword comes
-#            break
-#        else:
-#            # found keyword {module}
-#            for word in valid_content.split():
-#                if word == 'module':
-#                    if
-#
-#
-#
-#    else:
-#        # todo: processing the module
-#
-#
-#
-#
-#    root = MacroCell('name', True)
-#    a = MacroCell('name', False)
-#    root.link_cell(a)
-#    a.link_cell(b)
-#
