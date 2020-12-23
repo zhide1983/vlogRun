@@ -11,6 +11,7 @@ class Module:
     def __init__(self):
         self.name = ''
         self.ports = []
+        self.nets = []
         self.parameters = []
         self.local_parameters = []
         self.instances = []
@@ -22,11 +23,9 @@ class Module:
         pass
 
 
-class Port:
+class Net:
     # [member] name: string type
     name = ''
-    # [member] 'input' | 'output' | 'inout'
-    direction = 'inout'
     # [member] 'wire' | 'bit' | 'logic' | 'reg'
     net_type = 'wire'
     # [member] 'signed' | 'unsigned' | ''
@@ -42,6 +41,36 @@ class Port:
 
     def __init__(self):
         pass
+
+
+class Port(Net):
+    # [member] 'input' | 'output' | 'inout'
+    direction = 'inout'
+
+    def __init__(self):
+        pass
+
+
+# class Port:
+#    # [member] name: string type
+#    name = ''
+#    # [member] 'input' | 'output' | 'inout'
+#    direction = 'inout'
+#    # [member] 'wire' | 'bit' | 'logic' | 'reg'
+#    net_type = 'wire'
+#    # [member] 'signed' | 'unsigned' | ''
+#    signing = ''
+#    # [member] upper range
+#    up_range = ''
+#    # [member] lower range
+#    lo_range = ''
+#    # [member] about macro
+#    macro_idx = 0
+#    # [member] comment: string type, one line
+#    comment = ''
+#
+#    def __init__(self):
+#        pass
 
 
 class Parameter:
@@ -68,9 +97,10 @@ class Instance:
         self.file_name = ''
         self.content = []  # instantiation text
         self.auto_inst = True
-        self.parameters = []  # parameter name & instantiated value
-        self.port_list = []  # port list info got from module
-        self.mapping = []  # port mapping info got from instantiation
+        self.m_param = []  # parameter name & value in the module
+        self.i_param = []  # parameter name & value when instantiation
+        self.m_port = []  # port list info got from module
+        self.i_port = {}  # port mapping info got from instantiation
         pass
 
 
@@ -621,56 +651,78 @@ def proc_inst_list(inst_list=None):
                     if not info:
                         try:
                             f1 = open('./' + inst.m_name + '.v', 'r')
-                            f1.close()
                             inst.file_name = './' + inst.m_name + '.v'
                             state = 1
                         except IOError:
                             try:
                                 f1 = open('./' + inst.m_name + '.sv', 'r')
-                                f1.close()
                                 inst.file_name = './' + inst_list.m_name + '.sv'
                                 state = 1
                             except IOError:
                                 print("Warning: Module file cannot be opened for reading")
                                 inst.auto_inst = False
-                                state = 2
+                                state = 20
                                 pass
                     elif re.search(r'\.v$|.sv$|.vh$|.svh$', info[0]):
                         try:
                             f1 = open(info[0], 'r')
-                            f1.close()
                             inst.file_name = info[0]
                             state = 1
                         except IOError:
                             print("Warning: Module file cannot be opened for reading")
                             inst.auto_inst = False
-                            state = 2
+                            state = 20
                     elif re.search(r'\\$', info[0]):
                         try:
                             f1 = open(info[0] + inst.m_name + '.v', 'r')
-                            f1.close()
                             inst.file_name = info[0]
                             state = 1
                         except IOError:
                             print("Warning: Module file cannot be opened for reading")
                             inst.auto_inst = False
-                            state = 2
+                            state = 20
                     else:
                         try:
                             f1 = open(info[0] + '\\' + inst.m_name + '.v', 'r')
-                            f1.close()
                             inst.file_name = info[0]
                             state = 1
                         except IOError:
                             print("Warning: Module file cannot be opened for reading")
                             inst.auto_inst = False
-                            state = 2
+                            state = 20
                 else:
                     inst.auto_inst = False
                     inst.m_name = str1
                     str1 = ''
-                    state = 2
+                    state = 20
             elif state == 1:
+                # open file and process it
+                line_list1 = []
+                while True:
+                    line1 = f1.readline()
+                    if not line1:
+                        break
+                    line_list1.append(line1)
+                content_list1 = parse_comment(line_list1)
+                m_content_list = parse_module(content_list1, False, inst.m_name, True)
+                if m_content_list:
+                    mi = Module()
+                    if m_content_list[0].header_param_content:
+                        proc_param_list(m_content_list[0].header_param_content, True, False, mi.parameters)
+                    if m_content_list[0].header_port_content:
+                        proc_port_list(m_content_list[0].header_port_content, True, mi.ports, mi)
+                    if m_content_list[0].param_content:
+                        proc_param_list(m_content_list[0].param_content, False, False, mi.parameters)
+                    if m_content_list[0].port_content:
+                        proc_port_list(m_content_list[0].port_content, False, mi.ports, mi)
+                    inst.m_param = mi.parameters
+                    inst.m_port = mi.ports
+                    state = 2
+                else:
+                    print('Warning: cannot find module in the file' + inst.file_name)
+                    inst.auto_inst = False
+                    state = 20
+            elif state == 2:
                 # Auto instance
                 if re.match(r'#', str1):
                     # parameter
@@ -701,6 +753,9 @@ def proc_inst_list(inst_list=None):
                 if re.match(r'\.', str1):
                     str1 = re.sub(r'^\.', '', str1)
                     state = 5
+                elif re.match(r'\)', str1):
+                    str1 = re.sub(r'^\)', '', str1)
+                    state = 10
                 else:
                     print('Error: In instance processing, wrong string input!')
                     print(' state = %s, string = %s' % (state, str1))
@@ -726,7 +781,7 @@ def proc_inst_list(inst_list=None):
             elif state == 7:
                 if re.match(r'\w+', str1):
                     p.value = re.match(r'\w+', str1).group()
-                    inst.parameters.append(p)
+                    inst.i_param.append(p)
                     str1 = re.sub(r'^\w+', '', str1)
                     state = 8
                 else:
@@ -754,6 +809,7 @@ def proc_inst_list(inst_list=None):
                     exit(1)
             elif state == 10:
                 if re.match(r'\w+', str1):
+                    inst.i_name = re.match(r'\w+', str1).group()
                     str1 = re.sub(r'^\w+', '', str1)
                     state = 11
                 elif re.match(r'\(', str1):
@@ -775,6 +831,9 @@ def proc_inst_list(inst_list=None):
                 if re.match(r'\.', str1):
                     str1 = re.sub(r'^\.', '', str1)
                     state = 13
+                elif re.match(r'\)', str1):
+                    str1 = re.sub(r'\)', '', str1)
+                    state = 18
                 else:
                     print('Error: In instance processing, wrong string input!')
                     print(' state = %s, string = %s' % (state, str1))
@@ -800,7 +859,7 @@ def proc_inst_list(inst_list=None):
             elif state == 15:
                 if re.match(r'\w+', str1):
                     p.value = re.match(r'\w+', str1).group()
-                    inst.mapping.append(p)
+                    inst.i_port[p.name] = p.value
                     str1 = re.sub(r'^\w+', '', str1)
                     state = 16
                 else:
@@ -834,10 +893,15 @@ def proc_inst_list(inst_list=None):
                     print('Error: In instance processing, wrong string input!')
                     print(' state = %s, string = %s' % (state, str1))
                     exit(1)
+            elif state == 20:
+                break
             else:
                 print('Error: In instance processing, wrong string input!')
                 print(' state = %s, string = %s' % (state, str1))
                 exit(1)
+        if state == 20:
+            state = 0
+            continue
 
 
 def parse_comment(line_list):
@@ -1051,27 +1115,6 @@ def parse_module(content_list, parse_all_module, module_name, parse_port_only):
     return m_list
 
 
-# is_in_comment: show that whether current line is in a block comment region
-is_in_comment = False
-# processing the line number
-line_num = 0
-is_in_module = False
-is_in_block = False
-is_in_para_port_list = False
-is_in_port_list = False
-is_in_one_port_declare = False
-is_in_up_range = False
-is_in_lo_range = False
-is_ansi_header = False
-proc_type = 'None'
-
-content_list = []
-parameter_list = []
-localparam_list = []
-point_to_identifier = True
-port_list = []
-module_list = []
-
 f = open('python_test.v', 'r')
 line_num = 0
 b = []
@@ -1095,9 +1138,9 @@ for module_content in module_content_list:
     if module_content.header_port_content:
         proc_port_list(module_content.header_port_content, True, m.ports, m)
     if module_content.param_content:
-        proc_param_list(module_content.header_param_content, False, False, m.parameters)
+        proc_param_list(module_content.param_content, False, False, m.parameters)
     if module_content.localparam_content:
-        proc_param_list(module_content.header_param_content, False, True, m.local_parameters)
+        proc_param_list(module_content.localparam_content, False, True, m.local_parameters)
     if module_content.port_content:
         proc_port_list(module_content.port_content, False, m.ports, m)
     # separate block content into 'always'/'initial'/'assign'/'instance' sub-blocks
@@ -1106,9 +1149,79 @@ for module_content in module_content_list:
 
     proc_inst_list(m.instance_list)
 
-#for each in m.parameters:
+    print('output auto instantiation')
+    print('-------------------------')
+
+    for inst in m.instance_list:
+        if inst.i_param:
+            print(inst.m_name + ' #(')
+            for each_param in inst.i_param:
+                last = each_param == inst.i_param[-1]
+                if last:
+                    print('    .' + each_param.name + ' '*(23-len(each_param.name))
+                          + '(' + each_param.value + ' '*(23-len(each_param.value)) + ')')
+                else:
+                    print('    .' + each_param.name + ' ' * (23 - len(each_param.name))
+                      + '(' + each_param.value + ' ' * (23 - len(each_param.value)) + '),')
+            print(') ' + inst.i_name + ' (')
+        else:
+            print(inst.m_name + ' ' + inst.i_name + ' (')
+        for each_port in inst.m_port:
+            last = each_port == inst.m_port[-1]
+            if each_port.direction == 'output' or each_port.direction == 'inout':
+                w = Net()
+                w.net_type = 'wire'
+                if inst.i_port.has_key(each_port.name):
+                    w.name = inst.i_port[each_port.name]
+                else:
+                    w.name = each_port.name
+                w.up_range = each_port.up_range
+                w.lo_range = each_port.lo_range
+                m.nets.append(w)
+                if last:
+                    print('    .' + each_port.name + ' '*(23-len(each_port.name))
+                          + '(' + w.name + ' '*(23-len(w.name)) + ')')
+                else:
+                    print('    .' + each_port.name + ' ' * (23 - len(each_port.name))
+                          + '(' + w.name + ' ' * (23 - len(w.name)) + '),')
+            else:
+                w = Net()
+                w.net_type = 'wire'
+                if inst.i_port.has_key(each_port.name):
+                    w.name = inst.i_port[each_port.name]
+                else:
+                    w.name = each_port.name
+                w.up_range = each_port.up_range
+                w.lo_range = each_port.lo_range
+                m.nets.append(w)
+                if last:
+                    print('    .' + each_port.name + ' ' * (23 - len(each_port.name))
+                          + '(' + w.name + ' ' * (23 - len(w.name)) + ')')
+                else:
+                    print('    .' + each_port.name + ' ' * (23 - len(each_port.name))
+                          + '(' + w.name + ' ' * (23 - len(w.name)) + '),')
+        print(');')
+
+        print('output signal width inferrer')
+        print('----------------------------')
+
+        # todo: the case that up_range/lo_range are parameter or define
+        for net in m.nets:
+            if net.lo_range:
+                ts = net.net_type + ' [' + net.up_range + ':' + net.lo_range + ']'
+                ts += ' ' * (24 - len(ts))
+                ts += net.name + ';'
+            else:
+                ts = net.net_type
+                ts += ' ' * (24 - len(ts))
+                ts += net.name + ';'
+            print(ts)
+
+    pass
+
+# for each in m.parameters:
 #    print('parameter %s = %s' % (each.name, each.value))
-#for each in m.ports:
+# for each in m.ports:
 #    print('%s %s %s [%s:%s] %s;' % (
 #        each.direction, each.net_type, each.signing, each.up_range, each.lo_range, each.name))
 
@@ -1116,9 +1229,6 @@ for module_content in module_content_list:
 # (c) processing block
 
 # (d) do the instance analysis
-
-
-
 
 
 # m.name = content_list[idx_module+1]
@@ -1152,4 +1262,3 @@ for module_content in module_content_list:
 #    root.link_cell(a)
 #    a.link_cell(b)
 #
-
