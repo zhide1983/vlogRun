@@ -1,3 +1,14 @@
+# =========================================================
+# -               Verilog Code Generator                  -
+# ---------------------------------------------------------
+# Author    : Chen Zhide (Derek Chen)
+# Emain     : chen_zhide@sina.cn
+# Project   : https://github.com/zhide1983/vlogRun
+#
+# ---------------------------------------------------------
+
+
+
 import re
 import sys
 
