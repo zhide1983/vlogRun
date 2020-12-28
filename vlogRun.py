@@ -705,6 +705,7 @@ def proc_inst_list(inst_list=None):
                             print("Warning: Module file cannot be opened for reading")
                             inst.auto_inst = False
                             state = 20
+                    str1 = ''
                 else:
                     inst.auto_inst = False
                     inst.m_name = str1
@@ -737,7 +738,6 @@ def proc_inst_list(inst_list=None):
                     print('Warning: cannot find module in the file' + inst.file_name)
                     inst.auto_inst = False
                     state = 20
-                str1 = ''
             elif state == 2:
                 # Auto instance
                 if re.match(r'#', str1):
